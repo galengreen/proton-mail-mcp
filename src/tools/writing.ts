@@ -103,7 +103,7 @@ export function registerWritingTools(server: McpServer, deps: WritingDeps): void
   server.registerTool("create_reply_draft", {
     title: "Create reply draft",
     description:
-      "Write a reply to a message and save it in Drafts, threaded with the original. It goes to the sender's Reply-To address if they set one, otherwise to the sender; replying to your own message goes to its recipients. The original is quoted below the reply unless quote is false. Nothing is sent: the user reviews and sends it from Proton Mail.",
+      "Write a reply to a message and save it in Drafts, threaded with the original. It goes to the sender's Reply-To address if they set one, otherwise to the sender; replying to your own message goes to its recipients. The original is quoted below the reply unless quote is false. Nothing is sent: the user reviews and sends it from Proton Mail. Note that Proton Mail Bridge does not keep threading headers on drafts, so the draft has the Re: subject and the quote but may not be grouped with the original conversation.",
     inputSchema: reply,
     annotations: WRITES_DRAFT
   }, async (args) => {

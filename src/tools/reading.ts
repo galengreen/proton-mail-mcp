@@ -63,6 +63,8 @@ export function registerReadingTools(server: McpServer, mailbox: Mailbox): void 
       replyTo: formatAddresses(mail.replyTo) || null,
       to: formatAddresses(mail.to),
       cc: formatAddresses(mail.cc) || null,
+      // Only drafts and sent mail carry Bcc.
+      bcc: formatAddresses(mail.bcc) || null,
       messageId: mail.messageId ?? null,
       inReplyTo: mail.inReplyTo ?? null,
       ...bodyFields(messageBody(mail), args.includeHtml),

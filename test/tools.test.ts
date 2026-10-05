@@ -144,6 +144,7 @@ test("read_email gives text without HTML by default, with attachments", async ()
   const mail = await s.json("read_email", { uid });
   assert.equal(mail.subject, "Your booking");
   assert.equal(mail.replyTo, "help@shop.example");
+  assert.equal(mail.bcc, null);
   assert.equal(mail.bodySource, "html");
   assert.match(mail.text, /See you soon/);
   assert.equal(mail.hasHtml, true);
@@ -187,6 +188,8 @@ test("create_draft stores the message in Drafts, keeping Bcc and attachments", a
   });
   assert.equal(result.saved, true);
   assert.equal(result.folder, "Drafts");
+  const stored = await s.json("read_email", { folder: "Drafts", uid: result.uid });
+  assert.equal(stored.bcc, "boss@example.org");
   const [draft] = s.account.messages("Drafts");
   assert.ok(draft?.flags.has("\\Draft"));
   const parsed = await simpleParser(draft!.raw);

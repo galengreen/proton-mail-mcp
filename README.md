@@ -53,6 +53,11 @@ Attachments are where the facts often are, so `read_email` includes:
 `read_attachment` returns images as images the model can look at, which is how
 a scanned receipt or a photographed ticket gets read.
 
+Reply drafts keep the `Re:` subject and the quoted original, but Proton Mail
+Bridge drops threading headers (`In-Reply-To`, `References`) from drafts, so a
+reply sent from a draft may not be grouped with the original. Replies sent with
+`reply_to_email` go through Bridge's SMTP and are threaded.
+
 Replies go where mail clients send them: to the `Reply-To` address if the
 sender set one, to the original recipients when you reply to your own message,
 and with reply-all, to everyone else on Cc.
