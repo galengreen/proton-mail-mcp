@@ -1,0 +1,45 @@
+{
+  "name": "proton-mail-mcp",
+  "version": "0.1.0",
+  "description": "MCP server that gives Claude and other MCP clients access to Proton Mail through Proton Mail Bridge",
+  "license": "MIT",
+  "author": "Galen Green",
+  "type": "module",
+  "bin": {
+    "proton-mail-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "start": "node dist/index.js",
+    "prepare": "tsc"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/galengreen/proton-mail-mcp.git"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.3.1",
+    "html-to-text": "10.0.1",
+    "imapflow": "2.2.5",
+    "mailparser": "3.9.36",
+    "nodemailer": "10.0.15",
+    "pdfjs-dist": "6.4.299",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
+    "@types/html-to-text": "9.0.4",
+    "@types/mailparser": "3.9.0",
+    "@types/node": "22.20.5",
+    "@types/nodemailer": "8.0.2",
+    "typescript": "7.0.2"
+  }
+}
