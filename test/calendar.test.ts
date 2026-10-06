@@ -20,7 +20,7 @@ const INVITE = [
   "LOCATION:12 Queen St\\, Auckland",
   "DESCRIPTION:Bring your\\nreferral",
   'ORGANIZER;CN="Smile Dental: Bookings":mailto:bookings@smile.example',
-  "ATTENDEE;CN=Galen;ROLE=REQ-PARTICIPANT:mailto:me@proton.me",
+  "ATTENDEE;CN=Galen;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:me@proton.me",
   "ATTENDEE:mailto:other@example.org",
   " ",
   "RRULE:FREQ=YEARLY",
@@ -47,7 +47,10 @@ test("parseCalendar reads an invitation", () => {
     location: "12 Queen St, Auckland",
     description: "Bring your\nreferral",
     organizer: "Smile Dental: Bookings <bookings@smile.example>",
-    attendees: ["Galen <me@proton.me>", "other@example.org"],
+    attendees: [
+      { person: "Galen <me@proton.me>", response: "ACCEPTED", role: "REQ-PARTICIPANT" },
+      { person: "other@example.org", response: null, role: null }
+    ],
     status: "CONFIRMED",
     recurrence: "FREQ=YEARLY",
     uid: "abc-123"

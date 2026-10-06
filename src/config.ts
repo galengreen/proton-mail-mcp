@@ -6,6 +6,8 @@ import { join, resolve } from "node:path";
 export interface Config {
   username: string;
   password: string;
+  /** Every address of the account, the username first. Used for From and to recognise your own mail. */
+  addresses: string[];
   host: string;
   imapPort: number;
   smtpPort: number;
@@ -24,6 +26,7 @@ export const DEFAULT_CREDENTIALS_FILE = join(homedir(), ".proton-bridge-credenti
 const KNOWN_KEYS = new Set([
   "PROTON_BRIDGE_USERNAME",
   "PROTON_BRIDGE_PASSWORD",
+  "PROTON_BRIDGE_ADDRESSES",
   "PROTON_BRIDGE_HOST",
   "PROTON_BRIDGE_IMAP_PORT",
   "PROTON_BRIDGE_SMTP_PORT",
@@ -36,7 +39,8 @@ const KNOWN_KEYS = new Set([
 
 /**
  * Read KEY=value lines in the style of a shell env file. Comments and blank
- * lines are skipped, and one pair of surrounding quotes is removed.
+ * lines are skipped, one pair of surrounding quotes is removed, and a
+ * comment after the value (" # ...") is dropped.
  */
 export function parseEnvFile(text: string): Record<string, string> {
   const result: Record<string, string> = {};
@@ -47,8 +51,8 @@ export function parseEnvFile(text: string): Record<string, string> {
     if (!match) continue;
     const [, key = "", rawValue = ""] = match;
     if (!KNOWN_KEYS.has(key)) continue;
-    const quoted = /^(["'])(.*)\1$/.exec(rawValue);
-    result[key] = quoted ? (quoted[2] ?? "") : rawValue;
+    const quoted = /^(["'])(.*?)\1\s*(?:#.*)?$/.exec(rawValue);
+    result[key] = quoted ? (quoted[2] ?? "") : rawValue.replace(/\s+#.*$/, "");
   }
   return result;
 }
@@ -80,8 +84,22 @@ export function readCredentialsFile(path: string): CredentialsFile {
 const TRUE = /^(1|true|yes|on)$/i;
 
 function toInt(value: string, fallback: number): number {
-  const n = Number.parseInt(value, 10);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
+  return /^\d+$/.test(value.trim()) ? Number(value.trim()) : fallback;
+}
+
+function toPort(value: string, fallback: number): number {
+  const n = toInt(value, fallback);
+  return n >= 1 && n <= 65535 ? n : fallback;
+}
+
+/** The username, then any other addresses given, each once, ignoring case. */
+function accountAddresses(username: string, extra: string): string[] {
+  const addresses = new Map<string, string>();
+  for (const raw of [username, ...extra.split(",")]) {
+    const address = raw.trim();
+    if (address !== "" && !addresses.has(address.toLowerCase())) addresses.set(address.toLowerCase(), address);
+  }
+  return [...addresses.values()];
 }
 
 export function expandHome(path: string, home = homedir()): string {
@@ -97,12 +115,14 @@ export function expandHome(path: string, home = homedir()): string {
 export function buildConfig(env: Record<string, string | undefined>, file: Record<string, string>, home = homedir()): Config {
   const get = (key: string): string => env[key] || file[key] || "";
   const dirs = get("PROTON_BRIDGE_ATTACHMENT_DIRS") || "~/Documents:~/Downloads:~/Desktop";
+  const username = get("PROTON_BRIDGE_USERNAME");
   return {
-    username: get("PROTON_BRIDGE_USERNAME"),
+    username,
     password: get("PROTON_BRIDGE_PASSWORD"),
+    addresses: accountAddresses(username, get("PROTON_BRIDGE_ADDRESSES")),
     host: get("PROTON_BRIDGE_HOST") || "127.0.0.1",
-    imapPort: toInt(get("PROTON_BRIDGE_IMAP_PORT"), 1143),
-    smtpPort: toInt(get("PROTON_BRIDGE_SMTP_PORT"), 1025),
+    imapPort: toPort(get("PROTON_BRIDGE_IMAP_PORT"), 1143),
+    smtpPort: toPort(get("PROTON_BRIDGE_SMTP_PORT"), 1025),
     smtpSecure: TRUE.test(get("PROTON_BRIDGE_SMTP_SECURE")),
     allowSend: TRUE.test(get("PROTON_BRIDGE_ALLOW_SEND")),
     imapIdleTimeoutMs: toInt(get("PROTON_BRIDGE_IDLE_TIMEOUT_MS"), 5 * 60_000),

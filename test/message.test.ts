@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { simpleParser, type ParsedMail } from "mailparser";
-import { bodyFields, messageBody, quotedReply, replyRecipients, replySubject, threadingHeaders } from "../src/message.ts";
+import { attribution, bodyFields, messageBody, quotedReply, replyFrom, replyRecipients, replySubject, threadingHeaders } from "../src/message.ts";
 import { rawMessage } from "./helpers/messages.ts";
 
 const SELF = "me@proton.me";
@@ -55,7 +55,7 @@ test("replySubject adds Re: only once, in any language's usual form", () => {
 
 test("a reply goes to Reply-To when the sender set one", async () => {
   const mail = await parse({ from: "noreply@shop.example", replyTo: '"Shop Support" <support@shop.example>', to: SELF });
-  assert.deepEqual(replyRecipients(mail, SELF, false), { to: '"Shop Support" <support@shop.example>' });
+  assert.deepEqual(replyRecipients(mail, [SELF], false), { to: '"Shop Support" <support@shop.example>' });
 });
 
 test("reply-all puts everyone else on Cc, once, without you", async () => {
@@ -64,18 +64,37 @@ test("reply-all puts everyone else on Cc, once, without you", async () => {
     to: ["ME@proton.me", "bob@example.org", "anna@example.org"],
     cc: ["carol@example.org", "bob@example.org"]
   });
-  assert.deepEqual(replyRecipients(mail, SELF, false), { to: '"Anna" <anna@example.org>' });
-  assert.deepEqual(replyRecipients(mail, SELF, true), { to: '"Anna" <anna@example.org>', cc: "bob@example.org, carol@example.org" });
+  assert.deepEqual(replyRecipients(mail, [SELF], false), { to: '"Anna" <anna@example.org>' });
+  assert.deepEqual(replyRecipients(mail, [SELF], true), { to: '"Anna" <anna@example.org>', cc: "bob@example.org, carol@example.org" });
 });
 
 test("replying to your own message goes to its recipients", async () => {
   const mail = await parse({ from: SELF, to: "anna@example.org", cc: "bob@example.org" });
-  assert.deepEqual(replyRecipients(mail, SELF, true), { to: "anna@example.org", cc: "bob@example.org" });
+  assert.deepEqual(replyRecipients(mail, [SELF], true), { to: "anna@example.org", cc: "bob@example.org" });
 });
 
 test("a note to yourself is answered to yourself", async () => {
   const mail = await parse({ from: SELF, to: SELF });
-  assert.deepEqual(replyRecipients(mail, SELF, true), { to: SELF });
+  assert.deepEqual(replyRecipients(mail, [SELF], true), { to: SELF });
+});
+
+test("your other addresses are never copied into a reply", async () => {
+  const mail = await parse({ from: "anna@example.org", to: "alias@pm.me", cc: ["me@proton.me", "bob@example.org"] });
+  assert.deepEqual(replyRecipients(mail, [SELF, "alias@pm.me"], true), { to: "anna@example.org", cc: "bob@example.org" });
+});
+
+test("a reply comes from the address the original was sent to", async () => {
+  const self = [SELF, "alias@pm.me"];
+  assert.equal(replyFrom(await parse({ from: "anna@example.org", to: "Alias@pm.me" }), self), "alias@pm.me");
+  assert.equal(replyFrom(await parse({ from: "alias@pm.me", to: "anna@example.org" }), self), "alias@pm.me");
+  assert.equal(replyFrom(await parse({ from: "anna@example.org", to: "list@lists.example" }), self), SELF);
+});
+
+test("the attribution line gives the date in the chosen time zone", async () => {
+  const original = await parse({ from: '"Anna" <anna@example.org>', text: "x" });
+  const line = attribution(original, "Pacific/Auckland");
+  // 09:00 UTC is 22:00 in New Zealand daylight time; the format follows this machine's locale.
+  assert.match(line, /^On .*2026.*(22|10)[:.]00.*, Anna wrote:$/);
 });
 
 test("threadingHeaders chain the references", () => {
@@ -88,10 +107,10 @@ test("threadingHeaders chain the references", () => {
 
 test("quotedReply puts the quoted original under the reply", async () => {
   const original = await parse({ from: '"Anna" <anna@example.org>', text: "Are we still on for Friday?\nCheers" });
-  const reply = quotedReply({ text: "Yes, see you then.", html: "<p>Yes, see you then.</p>" }, original);
+  const reply = quotedReply({ text: "Yes, see you then.", html: "<p>Yes, see you then.</p>" }, original, { timeZone: "UTC" });
   assert.equal(
     reply.text,
-    "Yes, see you then.\n\nOn Thu, 01 Oct 2026 09:00:00 GMT, Anna wrote:\n> Are we still on for Friday?\n> Cheers\n"
+    `Yes, see you then.\n\n${attribution(original, "UTC")}\n> Are we still on for Friday?\n> Cheers\n`
   );
   assert.match(reply.html ?? "", /<blockquote[^>]*>Are we still on for Friday\?<br>\nCheers<\/blockquote>/);
 });

@@ -3,6 +3,8 @@ import type {
   CopyResponseObject,
   FetchMessageObject,
   FetchQueryObject,
+  ListOptions,
+  ListResponse,
   ListTreeResponse,
   SearchObject
 } from "imapflow";
@@ -19,6 +21,7 @@ export interface MailClient {
   close(): void;
   noop(): Promise<void>;
   on(event: "error" | "close", listener: (error?: unknown) => void): unknown;
+  list(options?: ListOptions): Promise<ListResponse[]>;
   listTree(): Promise<ListTreeResponse>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
   fetch(range: string | number[], query: FetchQueryObject, options?: { uid?: boolean }): AsyncIterable<FetchMessageObject>;

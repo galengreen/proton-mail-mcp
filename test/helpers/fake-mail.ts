@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { simpleParser } from "mailparser";
-import type { FetchMessageObject, FetchQueryObject, ListTreeResponse, SearchObject } from "imapflow";
+import type { FetchMessageObject, FetchQueryObject, ListOptions, ListResponse, ListTreeResponse, MessageStructureObject, SearchObject } from "imapflow";
 import type { MailClient } from "../../src/imap/client.ts";
 
 interface StoredMessage {
@@ -127,6 +127,23 @@ export class FakeClient extends EventEmitter implements MailClient {
     this.#step("noop");
   }
 
+  async list(options: ListOptions = {}): Promise<ListResponse[]> {
+    this.#step("list");
+    return [...this.#account.folders].map(([path, folder]) => {
+      const parts = path.split("/");
+      const entry: ListResponse = {
+        path, pathAsListed: path, name: parts[parts.length - 1] ?? path, delimiter: "/",
+        parent: parts.slice(0, -1), parentPath: parts.slice(0, -1).join("/"),
+        flags: new Set(), listed: true, subscribed: true
+      };
+      if (folder.specialUse) entry.specialUse = folder.specialUse;
+      if (options.statusQuery) {
+        entry.status = { path, messages: folder.messages.length, unseen: folder.messages.filter((m) => !m.flags.has("\\Seen")).length };
+      }
+      return entry;
+    });
+  }
+
   async listTree(): Promise<ListTreeResponse> {
     this.#step("listTree");
     const root: ListTreeResponse = { root: true, folders: [] };
@@ -168,15 +185,27 @@ export class FakeClient extends EventEmitter implements MailClient {
     const result: FetchMessageObject = { seq: folder.messages.indexOf(message) + 1, uid: message.uid };
     if (query.flags) result.flags = new Set(message.flags);
     if (query.source) result.source = message.raw;
-    if (query.envelope) {
+    if (query.size) result.size = message.raw.length;
+    if (query.envelope || query.bodyStructure) {
       const parsed = await simpleParser(message.raw);
-      const from = parsed.from?.value[0];
-      result.envelope = {
-        subject: parsed.subject,
-        date: parsed.date,
-        messageId: parsed.messageId,
-        from: from ? [{ name: from.name, address: from.address }] : []
-      };
+      if (query.envelope) {
+        const from = parsed.from?.value[0];
+        const to = (Array.isArray(parsed.to) ? parsed.to : parsed.to ? [parsed.to] : []).flatMap((t) => t.value);
+        result.envelope = {
+          subject: parsed.subject,
+          date: parsed.date,
+          messageId: parsed.messageId,
+          from: from ? [{ name: from.name, address: from.address }] : [],
+          to: to.map((t) => ({ name: t.name, address: t.address }))
+        };
+      }
+      if (query.bodyStructure) {
+        // Only what the server reads from a structure: a text part, and one node per attachment.
+        const text: MessageStructureObject = { type: "text/plain", part: "1" };
+        const attachments = parsed.attachments.map((a, i): MessageStructureObject =>
+          ({ type: a.contentType, part: String(i + 2), disposition: a.contentDisposition }));
+        result.bodyStructure = attachments.length ? { type: "multipart/mixed", childNodes: [text, ...attachments] } : text;
+      }
     }
     return result;
   }

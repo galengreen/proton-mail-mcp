@@ -5,8 +5,10 @@ import { readPdfText } from "./pdf.ts";
 
 /** Sizes above which content is left out. */
 export interface Limits {
-  /** Text inlined in a read_email listing. */
+  /** Text inlined in a read_email listing, per attachment. */
   inlineText: number;
+  /** Text inlined in a read_email listing, all attachments together. */
+  inlineTotal: number;
   /** Text returned by read_attachment, including PDF text. */
   fullText: number;
   /** Largest PDF whose text is extracted. */
@@ -19,6 +21,7 @@ export interface Limits {
 
 export const LIMITS: Limits = {
   inlineText: 64 * 1024,
+  inlineTotal: 256 * 1024,
   fullText: 1024 * 1024,
   pdfFile: 8 * 1024 * 1024,
   image: 4 * 1024 * 1024,
@@ -43,6 +46,9 @@ export interface AttachmentInfo {
 
 type Kind = "calendar" | "text" | "pdf" | "image" | "binary";
 
+/** Image types a model can look at. Others, such as HEIC photos from an iPhone, are sent as files. */
+const VIEWABLE_IMAGES = new Set(["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"]);
+
 export function kindOf(attachment: Pick<Attachment, "contentType" | "filename">): Kind {
   const type = attachment.contentType.toLowerCase();
   if (type === "text/calendar" || type === "application/ics") return "calendar";
@@ -50,7 +56,7 @@ export function kindOf(attachment: Pick<Attachment, "contentType" | "filename">)
   if (type === "application/pdf" || type === "application/x-pdf") return "pdf";
   // PDFs are often sent as a generic binary; the name gives them away.
   if (type === "application/octet-stream" && /\.pdf$/i.test(attachment.filename ?? "")) return "pdf";
-  if (type.startsWith("image/")) return "image";
+  if (VIEWABLE_IMAGES.has(type)) return "image";
   return "binary";
 }
 
@@ -123,23 +129,30 @@ async function withPdfText(info: AttachmentInfo, attachment: Attachment, limits:
  * Describe every attachment for read_email. Text, calendar invites and the
  * text of PDFs are included when small enough, because that is often where
  * the facts are: the time of an appointment, the amount on an invoice.
+ * Attachments are read one at a time, and once `inlineTotal` bytes of text
+ * have been included the rest are only listed, so a message with many PDFs
+ * stays a readable size.
  */
 export async function describeAttachments(attachments: Attachment[], limits: Limits = LIMITS): Promise<AttachmentInfo[]> {
-  return Promise.all(attachments.map(async (attachment, index) => {
+  const described: AttachmentInfo[] = [];
+  let remaining = limits.inlineTotal;
+  for (const [index, attachment] of attachments.entries()) {
     const info = baseInfo(attachment, index);
-    switch (kindOf(attachment)) {
-      case "pdf":
-        return withPdfText(info, attachment, limits, limits.inlineText);
-      case "calendar":
-      case "text":
-        if (info.size > limits.inlineText) {
-          return { ...info, content: null, note: `Not shown: ${info.size} bytes. Use read_attachment to read it.` };
-        }
-        return withText(info, attachment, limits.inlineText);
-      default:
-        return info;
+    const kind = kindOf(attachment);
+    let entry: AttachmentInfo = info;
+    if ((kind === "pdf" || kind === "calendar" || kind === "text") && remaining <= 0) {
+      entry = { ...info, content: null, note: "Not shown, to keep the message a readable size. Use read_attachment to read it." };
+    } else if (kind === "pdf") {
+      entry = await withPdfText(info, attachment, limits, Math.min(limits.inlineText, remaining));
+    } else if (kind === "calendar" || kind === "text") {
+      entry = info.size > limits.inlineText
+        ? { ...info, content: null, note: `Not shown: ${info.size} bytes. Use read_attachment to read it.` }
+        : withText(info, attachment, Math.min(limits.inlineText, remaining));
     }
-  }));
+    if (typeof entry.content === "string") remaining -= Buffer.byteLength(entry.content);
+    described.push(entry);
+  }
+  return described;
 }
 
 /** Find an attachment by index or, failing that, by filename (ignoring case). */
@@ -172,7 +185,7 @@ export type ToolContent =
  */
 export async function attachmentContent(attachment: Attachment, index: number, limits: Limits = LIMITS): Promise<ToolContent[]> {
   const info = baseInfo(attachment, index);
-  const json = (value: AttachmentInfo): ToolContent => ({ type: "text", text: JSON.stringify(value, null, 2) });
+  const json = (value: AttachmentInfo): ToolContent => ({ type: "text", text: JSON.stringify(value) });
   switch (kindOf(attachment)) {
     case "pdf":
       // A PDF's bytes are of no use to a model; its text is.

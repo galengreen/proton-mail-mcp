@@ -4,8 +4,27 @@ import type { ToolAnnotations } from "@modelcontextprotocol/server";
 export const folder = (what = "Folder path, e.g. INBOX, Archive or Folders/Receipts (see list_folders)") =>
   z.string().min(1).default("INBOX").describe(what);
 
+/**
+ * The folder a UID belongs to. Required, with no default: UIDs are numbered
+ * per folder, so a UID found in Archive or All Mail names a different
+ * message in INBOX, and guessing the folder would act on the wrong one.
+ */
+export const messageFolder = (what = "Folder the message is in, exactly as list_emails or search_emails was given it") =>
+  z.string().min(1).describe(`${what}. UIDs are numbered per folder, so this must be the folder the UID came from`);
+
 export const uid = (what = "UID of the message, as given by list_emails or search_emails") =>
   z.number().int().positive().describe(what);
+
+export const MAX_UIDS = 100;
+
+/** One UID, or several in the same folder to change together. */
+export const uids = (what = "UID of the message, or a list of up to 100 UIDs in the same folder, as given by list_emails or search_emails") =>
+  z.union([z.number().int().positive(), z.array(z.number().int().positive()).min(1).max(MAX_UIDS)]).describe(what);
+
+/** The UIDs as a list, each once. */
+export function uidList(value: number | number[]): number[] {
+  return [...new Set(Array.isArray(value) ? value : [value])];
+}
 
 export const limit = z.number().int().min(1).max(50).default(20).describe("How many messages to return, 1 to 50");
 
@@ -33,6 +52,7 @@ export const REMOVES_MAIL: ToolAnnotations = { readOnlyHint: false, destructiveH
 /** Sending reaches other people and cannot be undone. */
 export const SENDS_MAIL: ToolAnnotations = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
 
+/** A tool result as compact JSON: indenting adds tokens and nothing a model needs. */
 export function json(value: unknown) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
+  return { content: [{ type: "text" as const, text: JSON.stringify(value) }] };
 }

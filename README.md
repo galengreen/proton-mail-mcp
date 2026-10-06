@@ -25,8 +25,8 @@ It is built to be safe to leave connected:
 
 | Tool | What it does |
 | --- | --- |
-| `list_folders` | Folders, your own folders under `Folders/`, and labels under `Labels/` |
-| `list_emails` | Messages in a folder, newest first, a page at a time |
+| `list_folders` | Folders, your own folders under `Folders/`, and labels under `Labels/`, with message and unread counts |
+| `list_emails` | Messages in a folder, newest first, a page at a time, with recipients, size and whether there are attachments |
 | `search_emails` | Search by sender, recipient, subject, text, dates, unread or flagged |
 | `read_email` | A message's text and attachments (see below) |
 | `read_attachment` | One attachment: images to look at, PDF text, text files, other files |
@@ -36,6 +36,11 @@ It is built to be safe to leave connected:
 | `mark_email` | Read, unread, flagged or unflagged |
 | `delete_email` | Move to Trash |
 | `add_label`, `remove_label` | Apply or remove one of your Proton labels |
+
+The tools that change mail take one UID or a list of up to 100 from the same
+folder. If any of them is missing, nothing is changed. Every tool that takes a
+UID also needs the folder it came from: UIDs are numbered per folder, so a UID
+found in Archive or All Mail is a different message in INBOX.
 | `send_email`, `reply_to_email` | Send straight away; only with `PROTON_BRIDGE_ALLOW_SEND` |
 
 `read_email` returns the plain text of a message. When a message has only
@@ -47,11 +52,15 @@ Attachments are where the facts often are, so `read_email` includes:
 
 - the text of PDFs (invoices, tickets, contracts), page by page;
 - calendar invites, parsed into the event's time, place, organiser and
-  attendees, with the time zone as written;
+  attendees (with each one's response), with the time zone as written;
 - text attachments such as CSV files.
 
-`read_attachment` returns images as images the model can look at, which is how
-a scanned receipt or a photographed ticket gets read.
+Up to 256 kB of attachment text is included in all; anything beyond that is
+listed with a note to use `read_attachment`.
+
+`read_attachment` returns PNG, JPEG, GIF and WebP images as images the model
+can look at, which is how a scanned receipt or a photographed ticket gets read.
+Other image types, such as HEIC photos from an iPhone, come back as files.
 
 Reply drafts keep the `Re:` subject and the quoted original, but Proton Mail
 Bridge drops threading headers (`In-Reply-To`, `References`) from drafts, so a
@@ -60,7 +69,11 @@ reply sent from a draft may not be grouped with the original. Replies sent with
 
 Replies go where mail clients send them: to the `Reply-To` address if the
 sender set one, to the original recipients when you reply to your own message,
-and with reply-all, to everyone else on Cc.
+and with reply-all, to everyone else on Cc. A reply comes from the address of
+yours that the original was sent to, if it is listed in
+`PROTON_BRIDGE_ADDRESSES`; new drafts can choose one with `from`.
+
+Attachments on one draft can come to at most 25 MB, Proton Mail's limit.
 
 ## Requirements
 
@@ -122,6 +135,7 @@ The environment wins when both have it.
 | --- | --- | --- |
 | `PROTON_BRIDGE_USERNAME` | (required) | Your Proton address, as shown in Bridge |
 | `PROTON_BRIDGE_PASSWORD` | (required) | The Bridge password |
+| `PROTON_BRIDGE_ADDRESSES` | (none) | Your other addresses and aliases on this account, comma-separated, to send from and to leave out of reply-all |
 | `PROTON_BRIDGE_HOST` | `127.0.0.1` | Where Bridge runs |
 | `PROTON_BRIDGE_IMAP_PORT` | `1143` | Bridge's IMAP port |
 | `PROTON_BRIDGE_SMTP_PORT` | `1025` | Bridge's SMTP port |
@@ -153,6 +167,9 @@ opens with. It uses version 2 of the official TypeScript SDK.
   Run `node dist/index.js` in a terminal to see the server's messages.
 - **A send failed with "may or may not have gone out":** the connection
   dropped mid-send. Look in Sent before sending again.
+- **A change failed with "may or may not have been made":** the connection
+  dropped while saving a draft, moving or labelling. Look in Drafts or the
+  folder before trying again.
 
 ## Development
 

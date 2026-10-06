@@ -25,18 +25,35 @@ export function isConnectionLost(error: unknown): boolean {
   return CONNECTION_LOST.test(text);
 }
 
+export const UNCERTAIN_CHANGE =
+  "The connection to Proton Mail Bridge dropped during this change, so it may or may not have been made. " +
+  "Check before trying again (for a draft, look in Drafts; for a move or label, look in the folder). " +
+  "It was not retried automatically, to avoid doing it twice.";
+
 /** One IMAP connection shared by every tool call, opened on demand. */
 export class ImapSession {
   readonly #options: SessionOptions;
   #client: MailClient | null = null;
   #connecting: Promise<MailClient> | null = null;
   #idleTimer: NodeJS.Timeout | null = null;
+  /** Operations under way; the idle timer starts only when none are. */
+  #active = 0;
 
   constructor(options: SessionOptions) {
     this.#options = options;
   }
 
   async run<T>(operation: (client: MailClient) => Promise<T>, policy: RetryPolicy): Promise<T> {
+    this.#active++;
+    try {
+      return await this.#run(operation, policy);
+    } finally {
+      this.#active--;
+      this.#scheduleIdle();
+    }
+  }
+
+  async #run<T>(operation: (client: MailClient) => Promise<T>, policy: RetryPolicy): Promise<T> {
     let { client, reused } = await this.#acquire();
     if (policy === "once" && reused) {
       try {
@@ -51,9 +68,11 @@ export class ImapSession {
     } catch (error) {
       const lost = !client.usable || isConnectionLost(error);
       if (lost) this.#discard(client);
-      if (!lost || policy === "once") throw error;
-    } finally {
-      this.#scheduleIdle();
+      if (!lost) throw error;
+      if (policy === "once") {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`${reason}. ${UNCERTAIN_CHANGE}`, { cause: error });
+      }
     }
     // The connection dropped under a repeatable operation: one more go.
     ({ client } = await this.#acquire());
@@ -62,8 +81,6 @@ export class ImapSession {
     } catch (error) {
       if (!client.usable || isConnectionLost(error)) this.#discard(client);
       throw error;
-    } finally {
-      this.#scheduleIdle();
     }
   }
 
@@ -136,7 +153,7 @@ export class ImapSession {
   #scheduleIdle(): void {
     this.#clearIdle();
     const client = this.#client;
-    if (!client || this.#options.idleTimeoutMs <= 0) return;
+    if (!client || this.#active > 0 || this.#options.idleTimeoutMs <= 0) return;
     this.#idleTimer = setTimeout(() => {
       if (this.#client !== client) return;
       this.#client = null;

@@ -41,8 +41,21 @@ test("buildConfig defaults attachment folders to Documents, Downloads and Deskto
   assert.deepEqual(buildConfig({}, {}, "/home/me").attachmentDirs, ["/home/me/Documents", "/home/me/Downloads", "/home/me/Desktop"]);
 });
 
-test("buildConfig ignores numbers it cannot read", () => {
-  assert.equal(buildConfig({ PROTON_BRIDGE_IMAP_PORT: "abc" }, {}).imapPort, 1143);
+test("buildConfig ignores numbers it cannot read and ports out of range", () => {
+  for (const port of ["abc", "1143abc", "0", "70000", "-5"]) assert.equal(buildConfig({ PROTON_BRIDGE_IMAP_PORT: port }, {}).imapPort, 1143, port);
+  assert.equal(buildConfig({ PROTON_BRIDGE_IDLE_TIMEOUT_MS: "0" }, {}).imapIdleTimeoutMs, 0);
+});
+
+test("buildConfig lists the username first among the addresses, each once", () => {
+  const config = buildConfig({ PROTON_BRIDGE_USERNAME: "me@proton.me", PROTON_BRIDGE_ADDRESSES: "alias@pm.me, ME@proton.me,,other@pm.me" }, {});
+  assert.deepEqual(config.addresses, ["me@proton.me", "alias@pm.me", "other@pm.me"]);
+});
+
+test("parseEnvFile drops a comment after the value", () => {
+  assert.deepEqual(parseEnvFile('PROTON_BRIDGE_USERNAME="me@proton.me" # main\nPROTON_BRIDGE_HOST=127.0.0.1 # local'), {
+    PROTON_BRIDGE_USERNAME: "me@proton.me",
+    PROTON_BRIDGE_HOST: "127.0.0.1"
+  });
 });
 
 test("readCredentialsFile warns when others can read the file", () => {

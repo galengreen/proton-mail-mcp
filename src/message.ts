@@ -106,17 +106,18 @@ export interface ReplyRecipients {
  * - for a message you sent yourself, its original To recipients;
  * - with reply-all, everyone else on To and Cc goes on Cc, minus yourself
  *   and anyone already included.
+ * `self` is every address of the account, so none of them is copied in.
  */
-export function replyRecipients(mail: Pick<ParsedMail, "from" | "replyTo" | "to" | "cc">, self: string, replyAll: boolean): ReplyRecipients {
-  const me = self.toLowerCase();
-  const isMe = (entry: EmailAddress) => entry.address?.toLowerCase() === me;
+export function replyRecipients(mail: Pick<ParsedMail, "from" | "replyTo" | "to" | "cc">, self: readonly string[], replyAll: boolean): ReplyRecipients {
+  const mine = new Set(self.map((address) => address.toLowerCase()));
+  const isMe = (entry: EmailAddress) => mine.has(entry.address?.toLowerCase() ?? "");
 
   let primary = addressList(mail.replyTo);
   if (primary.length === 0) primary = addressList(mail.from);
   const sentByMe = primary.length > 0 && primary.every(isMe);
   if (sentByMe) primary = addressList(mail.to);
 
-  const seen = new Set<string>([me]);
+  const seen = new Set<string>(mine);
   const fresh = (entry: EmailAddress) => {
     const key = entry.address?.toLowerCase() ?? "";
     if (key === "" || seen.has(key)) return false;
@@ -136,18 +137,43 @@ export function replyRecipients(mail: Pick<ParsedMail, "from" | "replyTo" | "to"
   return result;
 }
 
+/**
+ * Which of your addresses a reply comes from: the one the original was sent
+ * to (To before Cc), or for your own message the one it was sent from, so a reply to mail
+ * for an alias does not give away your main address. Otherwise the first.
+ */
+export function replyFrom(mail: Pick<ParsedMail, "from" | "to" | "cc">, self: readonly string[]): string {
+  const mine = new Map(self.map((address) => [address.toLowerCase(), address]));
+  for (const entry of [...addressList(mail.to), ...addressList(mail.cc), ...addressList(mail.from)]) {
+    const address = mine.get(entry.address?.toLowerCase() ?? "");
+    if (address) return address;
+  }
+  return self[0] ?? "";
+}
+
 export function threadingHeaders(mail: Pick<ParsedMail, "messageId" | "references">): { inReplyTo?: string; references?: string[] } {
   if (!mail.messageId) return {};
   const earlier = Array.isArray(mail.references) ? mail.references : mail.references ? [mail.references] : [];
   return { inReplyTo: mail.messageId, references: [...earlier, mail.messageId] };
 }
 
-/** The "On <date>, <sender> wrote:" line above a quoted reply. */
-export function attribution(mail: Pick<ParsedMail, "date" | "from">): string {
+export interface QuoteOptions {
+  maxQuoteBytes?: number;
+  /** Time zone for the date in the attribution line; this machine's by default. */
+  timeZone?: string;
+}
+
+/** The "On <date>, <sender> wrote:" line above a quoted reply, with the date in local time. */
+export function attribution(mail: Pick<ParsedMail, "date" | "from">, timeZone?: string): string {
   const sender = addressList(mail.from)[0];
   const who = sender ? (sender.name || sender.address) : "the sender";
-  const when = mail.date ? mail.date.toUTCString() : null;
-  return when ? `On ${when}, ${who} wrote:` : `${who} wrote:`;
+  if (!mail.date || Number.isNaN(mail.date.getTime())) return `${who} wrote:`;
+  const when = new Intl.DateTimeFormat(undefined, {
+    weekday: "short", day: "numeric", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit", timeZoneName: "short",
+    ...(timeZone !== undefined && { timeZone })
+  }).format(mail.date);
+  return `On ${when}, ${who} wrote:`;
 }
 
 export interface ReplyBody {
@@ -160,12 +186,13 @@ export interface ReplyBody {
  * the original's text (converted from HTML when that is all it has), so it
  * never carries the sender's markup or tracking images into the draft.
  */
-export function quotedReply(reply: ReplyBody, original: Pick<ParsedMail, "date" | "from" | "text" | "html">, maxQuoteBytes = MAX_BODY_BYTES): ReplyBody {
+export function quotedReply(reply: ReplyBody, original: Pick<ParsedMail, "date" | "from" | "text" | "html">, options: QuoteOptions = {}): ReplyBody {
+  const { maxQuoteBytes = MAX_BODY_BYTES, timeZone } = options;
   const body = messageBody(original);
   if (body.source === "none") return reply;
   const quoted = truncateUtf8(body.text.trimEnd(), maxQuoteBytes);
   const quotedText = quoted.text + (quoted.truncated ? "\n[...]" : "");
-  const intro = attribution(original);
+  const intro = attribution(original, timeZone);
   const text = `${reply.text.trimEnd()}\n\n${intro}\n${quoteLines(quotedText)}\n`;
   if (reply.html === undefined) return { text };
   const html =

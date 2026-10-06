@@ -16,6 +16,25 @@ test("kindOf recognises PDFs sent as generic binaries", () => {
   assert.equal(kindOf({ contentType: "text/calendar", filename: undefined }), "calendar");
 });
 
+test("kindOf returns only images a model can view as images", () => {
+  for (const type of ["image/png", "image/jpeg", "image/gif", "image/webp"]) assert.equal(kindOf({ contentType: type, filename: undefined }), "image", type);
+  for (const type of ["image/heic", "image/tiff", "image/svg+xml"]) assert.equal(kindOf({ contentType: type, filename: undefined }), "binary", type);
+});
+
+test("describeAttachments stops inlining text once the total budget is spent", async () => {
+  const mail = await mailWith([
+    { filename: "one.txt", content: "a".repeat(80) },
+    { filename: "two.txt", content: "b".repeat(80) },
+    { filename: "three.txt", content: "c".repeat(80) }
+  ]);
+  const [one, two, three] = await describeAttachments(mail.attachments, { ...LIMITS, inlineTotal: 120 });
+  assert.equal(one?.content, "a".repeat(80));
+  assert.equal(two?.content, "b".repeat(40));
+  assert.equal(two?.truncated, true);
+  assert.equal(three?.content, null);
+  assert.match(three?.note ?? "", /read_attachment/);
+});
+
 test("describeAttachments includes text, invites and PDF text", async () => {
   const mail = await mailWith([
     { filename: "notes.txt", content: "Gate code 4321" },
@@ -69,7 +88,7 @@ test("attachmentContent returns images to look at and other files as base64", as
   const image = await attachmentContent(scan!, 0);
   assert.deepEqual(image[1], { type: "image", data: Buffer.from("png-bytes").toString("base64"), mimeType: "image/png" });
   const binary = await attachmentContent(data!, 1);
-  assert.match(binary[0]?.type === "text" ? binary[0].text : "", /"contentBase64": "Ynl0ZXM="/);
+  assert.match(binary[0]?.type === "text" ? binary[0].text : "", /"contentBase64":"Ynl0ZXM="/);
   const tooBig = await attachmentContent(huge!, 2, { ...LIMITS, image: 10 });
   assert.equal(tooBig.length, 1);
   assert.match(tooBig[0]?.type === "text" ? tooBig[0].text : "", /over the 10 byte limit/);

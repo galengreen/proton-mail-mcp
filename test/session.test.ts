@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { ImapSession, isConnectionLost } from "../src/imap/session.ts";
 import { FakeAccount, type FakeClient } from "./helpers/fake-mail.ts";
 
-function setup() {
+function setup(idleTimeoutMs = 0) {
   const account = new FakeAccount();
   const clients: FakeClient[] = [];
   const session = new ImapSession({
-    idleTimeoutMs: 0,
+    idleTimeoutMs,
     createClient: () => {
       const client = account.client();
       clients.push(client);
@@ -57,7 +57,7 @@ test("a once operation is never retried", async () => {
   await assert.rejects(session.run(async () => {
     calls++;
     throw new Error("Command timed out");
-  }, "once"), /timed out/);
+  }, "once"), /timed out\. .*may or may not have been made/);
   assert.equal(calls, 1);
 });
 
@@ -90,4 +90,18 @@ test("close logs out", async () => {
   await session.run(async () => {}, "repeatable");
   await session.close();
   assert.equal(clients[0]!.usable, false);
+});
+
+test("the idle timer does not log out while another operation is running", async () => {
+  const { session, clients } = setup(20);
+  let release!: () => void;
+  const slow = session.run(() => new Promise<void>((resolve) => { release = resolve; }), "repeatable");
+  await session.run(async () => {}, "repeatable");
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(clients[0]!.usable, true);
+  release();
+  await slow;
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(clients[0]!.usable, false);
+  assert.equal(clients.length, 1);
 });

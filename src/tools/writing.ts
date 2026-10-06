@@ -3,11 +3,11 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import type { ParsedMail } from "mailparser";
 import { buildMessage, mailOptions, type Draft } from "../compose.ts";
 import type { Config } from "../config.ts";
-import type { LocalFile } from "../files.ts";
+import { MAX_ATTACHMENT_BYTES, type LocalFile } from "../files.ts";
 import type { Mailbox } from "../mailbox.ts";
-import { quotedReply, replyRecipients, replySubject, threadingHeaders } from "../message.ts";
+import { quotedReply, replyFrom, replyRecipients, replySubject, threadingHeaders } from "../message.ts";
 import type { SmtpSender } from "../smtp.ts";
-import { SENDS_MAIL, WRITES_DRAFT, addresses, attachmentPaths, folder, json, uid } from "./shared.ts";
+import { SENDS_MAIL, WRITES_DRAFT, addresses, attachmentPaths, json, messageFolder, uid } from "./shared.ts";
 
 export interface WritingDeps {
   config: Config;
@@ -17,7 +17,11 @@ export interface WritingDeps {
   readFile: (path: string) => Promise<LocalFile>;
 }
 
+const from = z.string().min(1).optional()
+  .describe("Which of your addresses to send from; by default the main one. Others must be listed in PROTON_BRIDGE_ADDRESSES");
+
 const newMessage = z.object({
+  from,
   to: addresses("Recipients, comma-separated, e.g. \"Anna <anna@example.com>, bob@example.com\""),
   cc: z.string().optional().describe("Cc recipients, comma-separated"),
   bcc: z.string().optional().describe("Bcc recipients, comma-separated"),
@@ -29,7 +33,7 @@ const newMessage = z.object({
 
 const reply = z.object({
   uid: uid("UID of the message being replied to"),
-  folder: folder("Folder the message being replied to is in"),
+  folder: messageFolder("Folder the message being replied to is in"),
   body: z.string().describe("The reply as plain text, without the quoted original"),
   html: z.string().optional().describe("Optional HTML version of the reply"),
   replyAll: z.boolean().default(false).describe("Also reply to everyone else on To and Cc, who go on Cc"),
@@ -37,16 +41,41 @@ const reply = z.object({
   attachments: attachmentPaths
 });
 
-type NewMessageArgs = { to: string; cc?: string | undefined; bcc?: string | undefined; subject: string; body: string; html?: string | undefined; attachments?: string[] | undefined };
+type NewMessageArgs = { from?: string | undefined; to: string; cc?: string | undefined; bcc?: string | undefined; subject: string; body: string; html?: string | undefined; attachments?: string[] | undefined };
 type ReplyArgs = { uid: number; folder: string; body: string; html?: string | undefined; replyAll: boolean; quote: boolean; attachments?: string[] | undefined };
 
+/**
+ * Read the files to attach, one at a time, stopping as soon as together
+ * they pass Proton's limit for one message rather than holding them all.
+ */
 async function readFiles(deps: WritingDeps, paths: string[] | undefined): Promise<LocalFile[]> {
-  return Promise.all((paths ?? []).map((path) => deps.readFile(path)));
+  const files: LocalFile[] = [];
+  let total = 0;
+  for (const path of paths ?? []) {
+    const file = await deps.readFile(path);
+    total += file.content.length;
+    if (total > MAX_ATTACHMENT_BYTES) {
+      throw new Error(`The attachments come to more than ${MAX_ATTACHMENT_BYTES} bytes, which is over Proton Mail's limit for one message.`);
+    }
+    files.push(file);
+  }
+  return files;
+}
+
+/** The From address: the one asked for, which must be one of the account's, or the main one. */
+function sendingAddress(config: Config, requested: string | undefined): string {
+  if (requested === undefined) return config.username;
+  const match = config.addresses.find((address) => address.toLowerCase() === requested.trim().toLowerCase());
+  if (match) return match;
+  throw new Error(
+    `${requested} is not one of your addresses (${config.addresses.join(", ")}). ` +
+    "Add other addresses of this account to PROTON_BRIDGE_ADDRESSES to send from them."
+  );
 }
 
 async function newDraft(deps: WritingDeps, args: NewMessageArgs): Promise<Draft> {
   return {
-    from: deps.config.username,
+    from: sendingAddress(deps.config, args.from),
     to: args.to,
     cc: args.cc,
     bcc: args.bcc,
@@ -59,14 +88,14 @@ async function newDraft(deps: WritingDeps, args: NewMessageArgs): Promise<Draft>
 
 async function replyDraft(deps: WritingDeps, args: ReplyArgs): Promise<{ draft: Draft; original: ParsedMail }> {
   const original = await deps.mailbox.read(args.folder, args.uid);
-  const recipients = replyRecipients(original, deps.config.username, args.replyAll);
+  const recipients = replyRecipients(original, deps.config.addresses, args.replyAll);
   const content = args.quote
     ? quotedReply({ text: args.body, ...(args.html !== undefined && { html: args.html }) }, original)
     : { text: args.body, html: args.html };
   return {
     original,
     draft: {
-      from: deps.config.username,
+      from: replyFrom(original, deps.config.addresses),
       to: recipients.to,
       cc: recipients.cc,
       subject: replySubject(original.subject),
@@ -80,6 +109,7 @@ async function replyDraft(deps: WritingDeps, args: ReplyArgs): Promise<{ draft: 
 
 function describe(draft: Draft) {
   return {
+    from: draft.from,
     to: draft.to,
     ...(draft.cc && { cc: draft.cc }),
     ...(draft.bcc && { bcc: draft.bcc }),
@@ -103,7 +133,7 @@ export function registerWritingTools(server: McpServer, deps: WritingDeps): void
   server.registerTool("create_reply_draft", {
     title: "Create reply draft",
     description:
-      "Write a reply to a message and save it in Drafts, threaded with the original. It goes to the sender's Reply-To address if they set one, otherwise to the sender; replying to your own message goes to its recipients. The original is quoted below the reply unless quote is false. Nothing is sent: the user reviews and sends it from Proton Mail. Note that Proton Mail Bridge does not keep threading headers on drafts, so the draft has the Re: subject and the quote but may not be grouped with the original conversation.",
+      "Write a reply to a message and save it in Drafts, threaded with the original. It is sent from the address of yours the original was sent to. It goes to the sender's Reply-To address if they set one, otherwise to the sender; replying to your own message goes to its recipients. The original is quoted below the reply unless quote is false. Nothing is sent: the user reviews and sends it from Proton Mail. Note that Proton Mail Bridge does not keep threading headers on drafts, so the draft has the Re: subject and the quote but may not be grouped with the original conversation.",
     inputSchema: reply,
     annotations: WRITES_DRAFT
   }, async (args) => {

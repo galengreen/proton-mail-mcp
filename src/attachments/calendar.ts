@@ -22,6 +22,15 @@ export interface CalendarTime {
   allDay: boolean;
 }
 
+export interface Attendee {
+  /** "Name <address>", or the address alone. */
+  person: string;
+  /** PARTSTAT: NEEDS-ACTION, ACCEPTED, DECLINED or TENTATIVE; null when not given. */
+  response: string | null;
+  /** ROLE: REQ-PARTICIPANT, OPT-PARTICIPANT, CHAIR; null when not given. */
+  role: string | null;
+}
+
 export interface CalendarEvent {
   summary: string | null;
   start: CalendarTime | null;
@@ -30,7 +39,7 @@ export interface CalendarEvent {
   location: string | null;
   description: string | null;
   organizer: string | null;
-  attendees: string[];
+  attendees: Attendee[];
   status: string | null;
   recurrence: string | null;
   uid: string | null;
@@ -121,6 +130,14 @@ function person(property: Property): string {
   return property.params.CN ? `${property.params.CN} <${address}>` : address;
 }
 
+function attendee(property: Property): Attendee {
+  return {
+    person: person(property),
+    response: property.params.PARTSTAT?.toUpperCase() ?? null,
+    role: property.params.ROLE?.toUpperCase() ?? null
+  };
+}
+
 function toEvent(component: Component): CalendarEvent {
   const first = (name: string) => component.properties.find((p) => p.name === name);
   const text = (name: string) => {
@@ -140,7 +157,7 @@ function toEvent(component: Component): CalendarEvent {
     location: text("LOCATION"),
     description: text("DESCRIPTION"),
     organizer: organizer ? person(organizer) : null,
-    attendees: component.properties.filter((p) => p.name === "ATTENDEE").map(person),
+    attendees: component.properties.filter((p) => p.name === "ATTENDEE").map(attendee),
     status: first("STATUS")?.value ?? null,
     recurrence: first("RRULE")?.value ?? null,
     uid: first("UID")?.value ?? null

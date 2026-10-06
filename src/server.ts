@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/server";
 import type { Config } from "./config.ts";
 import type { LocalFile } from "./files.ts";
@@ -7,7 +8,8 @@ import { registerOrganisingTools } from "./tools/organising.ts";
 import { registerReadingTools } from "./tools/reading.ts";
 import { registerWritingTools } from "./tools/writing.ts";
 
-export const VERSION = "0.1.0";
+// package.json sits one level up from both src/ and dist/.
+export const VERSION: string = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 export const INSTRUCTIONS =
   "This server reads and organises the user's Proton Mail. " +
